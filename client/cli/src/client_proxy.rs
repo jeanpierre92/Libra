@@ -45,6 +45,9 @@ use std::{
     thread, time,
 };
 
+// JP CODE
+use chrono::{DateTime, Utc};
+
 const CLIENT_WALLET_MNEMONIC_FILE: &str = "client.mnemonic";
 const GAS_UNIT_PRICE: u64 = 0;
 const MAX_GAS_AMOUNT: u64 = 400_000;
@@ -462,7 +465,12 @@ impl ClientProxy {
             self.get_account_address_from_parameter(space_delim_strings[1])?;
         let receiver_address = self.get_account_address_from_parameter(space_delim_strings[2])?;
 
-        let num_coins = Self::convert_to_micro_libras(space_delim_strings[3])?;
+        // JP CODE
+        let dt: DateTime<Utc> = chrono::Utc::now();
+        let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+        println!("New transaction of {} coin(s) at time: {} {{\n    from: {}\n    To:   {}\n}}", space_delim_strings[3], dt, sender_account_address, receiver_address);
+
+        let num_coins = Self::convert_to_micro_libras(space_delim_strings[3])?;   
 
         let gas_unit_price = if space_delim_strings.len() > 4 {
             Some(space_delim_strings[4].parse::<u64>().map_err(|error| {

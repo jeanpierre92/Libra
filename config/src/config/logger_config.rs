@@ -28,6 +28,17 @@ impl Default for LoggerConfig {
     }
 }
 
+// JP CODE
+impl LoggerConfig {
+    pub fn log_all() -> LoggerConfig {
+        LoggerConfig {
+            is_async: true,
+            chan_size: 256,
+            filter_level: FilterLevel::Trace,
+        }
+    }
+}
+
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn serialize_filter_level<S>(filter_level: &FilterLevel, serializer: S) -> Result<S::Ok, S::Error>
 where

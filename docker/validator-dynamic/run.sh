@@ -1,10 +1,10 @@
-#!/bin/sh
+#!/bin/bash
 # Copyright (c) The Libra Core Contributors
 # SPDX-License-Identifier: Apache-2.0
 set -ex
 
 image="${1:-libra_validator_dynamic:latest}"
-nodes="5"
+nodes="3"
 base_ip="172.18.0"
 ip_offset="10"
 bootstrap="$base_ip.$ip_offset"

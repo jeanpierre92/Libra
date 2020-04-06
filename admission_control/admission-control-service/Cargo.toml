@@ -10,6 +10,9 @@ publish = false
 edition = "2018"
 
 [dependencies]
+lcs = { path = "../../common/lcs", version = "0.1.0", package = "libra-canonical-serialization" }
+
+chrono = "0.4.7"
 anyhow = "1.0"
 prost = "0.6"
 futures = "0.3.0"

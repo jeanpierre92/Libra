@@ -6,6 +6,9 @@ use crate::{
     commands::{blocking_cmd, report_error, subcommand_execute, Command},
 };
 
+extern crate chrono;
+use chrono::{DateTime, Local};
+
 /// Major command for account related operations.
 pub struct AccountCommand {}
 
@@ -41,11 +44,15 @@ impl Command for AccountCommandCreate {
     }
     fn execute(&self, client: &mut ClientProxy, _params: &[&str]) {
         println!(">> Creating/retrieving next account from wallet");
+        //JPCODE
+        let local: DateTime<Local> = Local::now();
         match client.create_next_account(true) {
             Ok(account_data) => println!(
-                "Created/retrieved account #{} address {}",
+                //JPCODE
+                "Created/retrieved account #{} address {} at timestamp: {}",
                 account_data.index,
-                hex::encode(account_data.address)
+                hex::encode(account_data.address),
+                local.format("%d-%m-%Y %H:%M:%S").to_string()
             ),
             Err(e) => report_error("Error creating account", e),
         }
@@ -137,7 +144,10 @@ impl Command for AccountCommandMint {
             println!("Invalid number of arguments for mint");
             return;
         }
-        println!(">> Minting coins");
+        //JP CODE
+        let local: DateTime<Local> = Local::now();
+        println!(">> Minting coins at timestamp: {}", local.format("%d-%m-%Y %H:%M:%S").to_string());
+        
         let is_blocking = blocking_cmd(params[0]);
         match client.mint_coins(&params, is_blocking) {
             Ok(_) => {

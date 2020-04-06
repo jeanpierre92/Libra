@@ -42,10 +42,16 @@ use consensus_types::{
 use libra_crypto::hash::TransactionAccumulatorHasher;
 use libra_logger::prelude::*;
 use libra_security_logger::{security_log, SecurityEvent};
+// JP CODE
+// imported AccountResource
 use libra_types::{
     crypto_proxies::{LedgerInfoWithSignatures, ValidatorChangeProof, ValidatorVerifier},
     transaction::TransactionStatus,
+    account_config::AccountResource,
 };
+
+use chrono::{DateTime, Utc};
+
 #[cfg(test)]
 use safety_rules::ConsensusState;
 use safety_rules::TSafetyRules;
@@ -910,18 +916,54 @@ impl<T: Payload> EventProcessor<T> {
         }
     }
 
+    // JP CODE
     fn update_counters_for_committed_blocks(blocks_to_commit: Vec<Arc<ExecutedBlock<T>>>) {
         for block in blocks_to_commit {
+            counters::COMMITTED_BLOCKS_COUNT.inc();
+
+            let block_txns = block.output().transaction_data();
+            counters::NUM_TXNS_PER_BLOCK.observe(block_txns.len() as f64);
+            
+            let dt: DateTime<Utc> = chrono::Utc::now();
+            let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
             if let Some(time_to_commit) =
                 duration_since_epoch().checked_sub(Duration::from_micros(block.timestamp_usecs()))
             {
                 counters::CREATION_TO_COMMIT_S.observe_duration(time_to_commit);
+                // JP CODE
+                // Print Block information that includes the current timestamp
+                let nil_marker = if block.block().is_nil_block() { "(NIL)" } else { "" };
+                println!("Block(#{}{})(Epoch:{})(#txn:{}): Commit time: {}.{}, At timestamp: {} \n{{",
+                    block.block().round(), 
+                    nil_marker, 
+                    block.block().epoch(), 
+                    (block_txns.len() as f64) - 1.0,
+                    time_to_commit.as_secs(), 
+                    time_to_commit.subsec_millis(),
+                    dt);
             }
-            counters::COMMITTED_BLOCKS_COUNT.inc();
-            let block_txns = block.output().transaction_data();
-            counters::NUM_TXNS_PER_BLOCK.observe(block_txns.len() as f64);
-
+            
             for txn in block_txns.iter() {
+                // JP CODE
+                // Iterates over the events generated in this txn, fetches the associated accounts
+                // and prints/logs the transaction
+                for event in txn.events() {
+                    if let Some((sender_or_receiver, account)) = event.get_sender_receiver() {
+                        if let Some(account_resource_blob) = txn.account_blobs().get(&account) {
+                            if let Some(account_resource) = account_resource_blob.get_account_resource_from_blob() {
+                                Self::log_metrics(account.to_string(), account_resource, sender_or_receiver, event.sequence_number());
+                            } else {
+                                println!("Failed to retrieve account resource from accountBlob");
+                            }
+                        } else {
+                            println!("Failed to retrieve accountBlob from account");
+                        }
+                    } else {
+                        println!("Failed to retrieve SendPaymentEvent or ReceivePaymentEvent");
+                    }
+                }
+
                 match txn.txn_info_hash() {
                     Some(_) => {
                         counters::COMMITTED_TXNS_COUNT
@@ -935,6 +977,8 @@ impl<T: Payload> EventProcessor<T> {
                     }
                 }
             }
+            println!("}}\n");
+
             for status in block.compute_result().compute_status.iter() {
                 match status {
                     TransactionStatus::Keep(_) => {
@@ -950,6 +994,22 @@ impl<T: Payload> EventProcessor<T> {
                 }
             }
         }
+    }
+
+    // JP function
+    // Log the moment where the transactions are validated
+    fn log_metrics(account_address: String, account_resource: AccountResource, sender_or_receiver: bool, sequence_number: u64) {
+        let balance = account_resource.balance();
+        let nr_of_received_events = account_resource.received_events().count();
+        let nr_of_send_events = account_resource.sent_events().count();
+
+        let mut sender_or_receiver_string = "Sender  ";
+        if sender_or_receiver {
+            sender_or_receiver_string = "Receiver";
+        }
+
+        println!("{}: {}\n     Balance: {}, SequenceNumber: {}, SendEvents: {}, ReceivedEvents: {}"
+        ,sender_or_receiver_string, account_address, balance, sequence_number, nr_of_send_events, nr_of_received_events);
     }
 
     /// Retrieve a n chained blocks from the block store starting from

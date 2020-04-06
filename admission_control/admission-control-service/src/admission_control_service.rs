@@ -22,6 +22,11 @@ use std::{convert::TryFrom, sync::Arc};
 use storage_client::{StorageRead, StorageReadServiceClient};
 use tokio::runtime::{Builder, Runtime};
 
+// JP CODE
+use chrono::{DateTime, Utc};
+use libra_types::{transaction::{SignedTransaction, TransactionPayload},
+                  proto::types::{SignedTransaction as SignedTransactionProto}};
+
 /// Struct implementing trait (service handle) AdmissionControlService.
 #[derive(Clone)]
 pub struct AdmissionControlService {
@@ -102,6 +107,20 @@ impl AdmissionControlService {
     }
 }
 
+// JP CODE
+// This function takes an SignedTransactionProto and tries to deserialize it to an SignedTransaction
+impl AdmissionControlService {
+    fn convert_txn_from_proto(&self, txn_proto: SignedTransactionProto) -> Option<SignedTransaction> {
+        match SignedTransaction::try_from(txn_proto.clone()) {
+            Ok(result) => return Some(result),
+            Err(e) => {
+                println!("submit txn rejected: {}", e);
+                return None
+            }
+        };  
+    }
+}
+
 #[tonic::async_trait]
 impl AdmissionControl for AdmissionControlService {
     /// Submit a transaction to the validator this AC instance connecting to.
@@ -112,6 +131,35 @@ impl AdmissionControl for AdmissionControlService {
         request: tonic::Request<SubmitTransactionRequest>,
     ) -> Result<tonic::Response<SubmitTransactionResponse>, tonic::Status> {
         debug!("[GRPC] AdmissionControl::submit_transaction");
+
+        // JP CODE
+        let dt: DateTime<Utc> = chrono::Utc::now();
+        let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+        if let Some(proto_signed_txn) = &request.get_ref().transaction {
+            if let Some(signed_txn) = self.convert_txn_from_proto(proto_signed_txn.clone()) {
+
+                let receiver: String = match signed_txn.payload() {
+                    TransactionPayload::Program => "PROGRAM, DEPRICATED".to_string(),
+                    TransactionPayload::WriteSet(_) => "WriteSet!!".to_string(),
+                    TransactionPayload::Script(script) => {
+                        if let Some(address) = script.args().get(0) {
+                            format!("{}", address)
+                        } else {
+                            "Could not parse address from script!".to_string()
+                        }
+                    },
+                    TransactionPayload::Module(_) => "Module???".to_string(),
+                };
+                println!("Admission Control(Transaction) {{");
+                println!("Sender:   {}", signed_txn.sender());
+                println!("Receiver: {}", receiver);
+                println!("SequenceNumber: {}, TimeStamp: {}\n}}\n", signed_txn.sequence_number(), dt);
+            }
+        } else {
+            println!("Could not get transaction from SubmitTransactionRequest");
+        }
+        
         counters::REQUESTS
             .with_label_values(&["submit_transaction"])
             .inc();

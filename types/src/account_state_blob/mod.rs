@@ -31,7 +31,7 @@ impl fmt::Debug for AccountStateBlob {
         let decoded = lcs::from_bytes(&self.blob)
             .map(|account_state: AccountState| format!("{:#?}", account_state))
             .unwrap_or_else(|_| String::from("[fail]"));
-
+            
         write!(
             f,
             "AccountStateBlob {{ \n \
@@ -41,6 +41,22 @@ impl fmt::Debug for AccountStateBlob {
             hex::encode(&self.blob),
             decoded,
         )
+    }
+}
+
+// JP function
+impl AccountStateBlob {
+    pub fn get_account_resource_from_blob(&self) -> Option<AccountResource> {
+        let resource_mapping = lcs::from_bytes(&self.blob)
+            .map(|account_state: AccountState| account_state.get_account_resource());
+
+        match resource_mapping {
+            Ok(resource) => match resource {
+                Ok(resource_option) => resource_option,
+                Err(..) => None,
+            },
+            Err(..) => None,
+        }
     }
 }
 

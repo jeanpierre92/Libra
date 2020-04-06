@@ -28,6 +28,20 @@ impl fmt::Debug for TransactionArgument {
     }
 }
 
+// JP CODE
+impl fmt::Display for TransactionArgument {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TransactionArgument::U64(value) => write!(f, "{}", value),
+            TransactionArgument::Bool(boolean) => write!(f, "{}", boolean),
+            TransactionArgument::Address(address) => write!(f, "{:?}", address),
+            TransactionArgument::U8Vector(vector) => {
+                write!(f, "{{U8Vector: 0x{}}}", hex::encode(vector))
+            }
+        }
+    }
+}
+
 #[derive(Clone, Debug, Error)]
 pub enum ErrorKind {
     #[error("ParseError: {0}")]

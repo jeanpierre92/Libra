@@ -367,6 +367,8 @@ where
                 );
 
                 if mempool_status.code == MempoolAddTransactionStatusCode::Valid {
+                    // JP CODE
+                    // This is where the transaction is accepted into the mempool
                     statuses.push(Status::AcStatus(AdmissionControlStatus::Accepted.into()));
                 } else {
                     statuses.push(Status::MempoolStatus(

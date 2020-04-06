@@ -42,7 +42,9 @@ pub fn setup_executable(
     no_logging: bool,
 ) -> (NodeConfig, Option<GlobalLoggerGuard>) {
     crash_handler::setup_panic_handler();
-    let mut _logger = set_default_global_logger(no_logging, &LoggerConfig::default());
+    //let mut _logger = set_default_global_logger(no_logging, &LoggerConfig::default());
+    //JP CODE
+    let mut _logger = set_default_global_logger(no_logging, &LoggerConfig::log_all());
 
     let config = load_config_from_path(config_path);
 

@@ -173,11 +173,11 @@ impl TransactionData {
         }
     }
 
-    fn account_blobs(&self) -> &HashMap<AccountAddress, AccountStateBlob> {
+    pub fn account_blobs(&self) -> &HashMap<AccountAddress, AccountStateBlob> {
         &self.account_blobs
     }
 
-    fn events(&self) -> &[ContractEvent] {
+    pub fn events(&self) -> &[ContractEvent] {
         &self.events
     }
 

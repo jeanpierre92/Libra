@@ -10,6 +10,7 @@ use crate::{
     ledger_info::LedgerInfo,
     proof::EventProof,
     transaction::Version,
+    account_address::AccountAddress,
 };
 use anyhow::{ensure, format_err, Error, Result};
 use libra_crypto::{
@@ -21,6 +22,9 @@ use libra_crypto_derive::CryptoHasher;
 use proptest_derive::Arbitrary;
 use serde::{Deserialize, Serialize};
 use std::convert::{TryFrom, TryInto};
+
+// JP CODE
+//use account_address::AccountAddress;
 
 /// Entry produced via a call to the `emit_event` builtin.
 #[derive(Hash, Clone, Eq, PartialEq, Serialize, Deserialize, CryptoHasher)]
@@ -118,6 +122,22 @@ impl std::fmt::Display for ContractEvent {
             )
         } else {
             write!(f, "{:?}", self)
+        }
+    }
+}
+
+// JP CODE
+// From a contractEvent it gets the Accountaddress and if this was the
+// sender or the receiver of the transaction.
+// Returns None if the contractEvent could not be parsed into any paymentEvent
+impl ContractEvent {
+    pub fn get_sender_receiver(&self) -> Option<(bool, AccountAddress)> {
+        if let Ok(payload) = SentPaymentEvent::try_from(self) {
+            return Some((true, payload.receiver()));
+        } else if let Ok(payload) = ReceivedPaymentEvent::try_from(self) {
+            return Some((false, payload.sender()));
+        } else {
+            return None;
         }
     }
 }
