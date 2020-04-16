@@ -69,6 +69,21 @@ impl ContractEvent {
     pub fn type_tag(&self) -> &TypeTag {
         &self.type_tag
     }
+
+    // JP CODE
+    // From a contractEvent it gets the Accountaddress and if this was the
+    // sender or the receiver of the transaction.
+    // Returns None if the contractEvent could not be parsed into any paymentEvent
+    // false == sender, true == receiver
+    pub fn get_sender_receiver(&self) -> Option<(bool, AccountAddress)> {
+        if let Ok(payload) = SentPaymentEvent::try_from(self) {
+            return Some((true, payload.receiver()));
+        } else if let Ok(payload) = ReceivedPaymentEvent::try_from(self) {
+            return Some((false, payload.sender()));
+        } else {
+            return None;
+        }
+    }
 }
 
 impl TryFrom<&ContractEvent> for SentPaymentEvent {
@@ -122,22 +137,6 @@ impl std::fmt::Display for ContractEvent {
             )
         } else {
             write!(f, "{:?}", self)
-        }
-    }
-}
-
-// JP CODE
-// From a contractEvent it gets the Accountaddress and if this was the
-// sender or the receiver of the transaction.
-// Returns None if the contractEvent could not be parsed into any paymentEvent
-impl ContractEvent {
-    pub fn get_sender_receiver(&self) -> Option<(bool, AccountAddress)> {
-        if let Ok(payload) = SentPaymentEvent::try_from(self) {
-            return Some((true, payload.receiver()));
-        } else if let Ok(payload) = ReceivedPaymentEvent::try_from(self) {
-            return Some((false, payload.sender()));
-        } else {
-            return None;
         }
     }
 }

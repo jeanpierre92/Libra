@@ -10,6 +10,7 @@ use admission_control_proto::proto::admission_control::{
     admission_control_server::{AdmissionControl, AdmissionControlServer},
     SubmitTransactionRequest, SubmitTransactionResponse,
 };
+use std::{convert::TryFrom, sync::Arc};
 use anyhow::Result;
 use futures::{
     channel::{mpsc, oneshot},
@@ -18,7 +19,6 @@ use futures::{
 use libra_config::config::NodeConfig;
 use libra_logger::prelude::*;
 use libra_types::proto::types::{UpdateToLatestLedgerRequest, UpdateToLatestLedgerResponse};
-use std::{convert::TryFrom, sync::Arc};
 use storage_client::{StorageRead, StorageReadServiceClient};
 use tokio::runtime::{Builder, Runtime};
 
@@ -36,6 +36,7 @@ pub struct AdmissionControlService {
     )>,
     /// gRPC client to send read requests to Storage.
     storage_read_client: Arc<dyn StorageRead>,
+    metric_sender_jp: mpsc::Sender<String>,
 }
 
 impl AdmissionControlService {
@@ -46,10 +47,12 @@ impl AdmissionControlService {
             oneshot::Sender<Result<SubmitTransactionResponse>>,
         )>,
         storage_read_client: Arc<dyn StorageRead>,
+        metric_sender_jp: mpsc::Sender<String>,
     ) -> Self {
         AdmissionControlService {
             ac_sender,
             storage_read_client,
+            metric_sender_jp,
         }
     }
 
@@ -61,6 +64,7 @@ impl AdmissionControlService {
             SubmitTransactionRequest,
             oneshot::Sender<Result<SubmitTransactionResponse>>,
         )>,
+        metric_sender_jp: mpsc::Sender<String>,
     ) -> Runtime {
         let runtime = Builder::new()
             .thread_name("ac-service-")
@@ -72,7 +76,7 @@ impl AdmissionControlService {
         // Create storage read client
         let storage_client: Arc<dyn StorageRead> =
             Arc::new(StorageReadServiceClient::new(&config.storage.address));
-        let admission_control_service = AdmissionControlService::new(ac_sender, storage_client);
+        let admission_control_service = AdmissionControlService::new(ac_sender, storage_client, metric_sender_jp);
 
         runtime.spawn(
             tonic::transport::Server::builder()
@@ -105,12 +109,10 @@ impl AdmissionControlService {
         );
         Ok(rust_resp.into())
     }
-}
 
-// JP CODE
-// This function takes an SignedTransactionProto and tries to deserialize it to an SignedTransaction
-impl AdmissionControlService {
-    fn convert_txn_from_proto(&self, txn_proto: SignedTransactionProto) -> Option<SignedTransaction> {
+    // JP CODE
+    // This function takes an SignedTransactionProto and tries to deserialize it into a SignedTransaction
+    fn convert_txn_from_proto(&self, txn_proto: &SignedTransactionProto) -> Option<SignedTransaction> {
         match SignedTransaction::try_from(txn_proto.clone()) {
             Ok(result) => return Some(result),
             Err(e) => {
@@ -118,6 +120,41 @@ impl AdmissionControlService {
                 return None
             }
         };  
+    }
+
+    // JP CODE
+    // Prints the request
+    fn print_and_log_transaction(&self, request: &tonic::Request<SubmitTransactionRequest>) -> Option<String> {
+        let dt: DateTime<Utc> = chrono::Utc::now();
+        let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+        if let Some(proto_signed_txn) = &request.get_ref().transaction {
+            if let Some(signed_txn) = self.convert_txn_from_proto(proto_signed_txn) {
+
+                let txn_type: String = match signed_txn.payload() {
+                    TransactionPayload::Program => String::from("Program!"),
+                    TransactionPayload::WriteSet(_) => String::from("WriteSet!(Genesis only)"),
+                    TransactionPayload::Script(_script) => {
+                        String::from("txn")
+                        /*
+                        if let Some(address) = script.args().get(0) {
+                            format!("{}", address)
+                        } else {
+                            "Could not parse address from script!".to_string()
+                        }*/
+                    },
+                    TransactionPayload::Module(_) => String::from("mod")
+                };
+                let csv_entry = format!("({},{},{},{},{})", signed_txn.sender(), signed_txn.sequence_number(), txn_type, "ac", dt);
+                println!("{}", csv_entry);
+                return Some(csv_entry)
+            }
+            println!("AC: Could not convert_txn_from_proto");
+            return None
+        } else {
+            println!("AC: Could not get transaction from SubmitTransactionRequest");
+            return None
+        }
     }
 }
 
@@ -133,31 +170,8 @@ impl AdmissionControl for AdmissionControlService {
         debug!("[GRPC] AdmissionControl::submit_transaction");
 
         // JP CODE
-        let dt: DateTime<Utc> = chrono::Utc::now();
-        let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-
-        if let Some(proto_signed_txn) = &request.get_ref().transaction {
-            if let Some(signed_txn) = self.convert_txn_from_proto(proto_signed_txn.clone()) {
-
-                let receiver: String = match signed_txn.payload() {
-                    TransactionPayload::Program => "PROGRAM, DEPRICATED".to_string(),
-                    TransactionPayload::WriteSet(_) => "WriteSet!!".to_string(),
-                    TransactionPayload::Script(script) => {
-                        if let Some(address) = script.args().get(0) {
-                            format!("{}", address)
-                        } else {
-                            "Could not parse address from script!".to_string()
-                        }
-                    },
-                    TransactionPayload::Module(_) => "Module???".to_string(),
-                };
-                println!("Admission Control(Transaction) {{");
-                println!("Sender:   {}", signed_txn.sender());
-                println!("Receiver: {}", receiver);
-                println!("SequenceNumber: {}, TimeStamp: {}\n}}\n", signed_txn.sequence_number(), dt);
-            }
-        } else {
-            println!("Could not get transaction from SubmitTransactionRequest");
+        if let Some(csv_entry) = self.print_and_log_transaction(&request) {
+            self.metric_sender_jp.clone().send(csv_entry).await.unwrap();
         }
         
         counters::REQUESTS

@@ -47,10 +47,13 @@ use libra_security_logger::{security_log, SecurityEvent};
 use libra_types::{
     crypto_proxies::{LedgerInfoWithSignatures, ValidatorChangeProof, ValidatorVerifier},
     transaction::TransactionStatus,
-    account_config::AccountResource,
 };
 
 use chrono::{DateTime, Utc};
+use futures::{
+    channel::mpsc,
+    SinkExt,
+    executor::block_on};
 
 #[cfg(test)]
 use safety_rules::ConsensusState;
@@ -206,6 +209,7 @@ pub struct EventProcessor<T> {
     // Cache of the last sent vote message.
     last_vote_sent: Option<(Vote, Round)>,
     validators: Arc<ValidatorVerifier>,
+    metric_sender_jp: mpsc::Sender<String>,
 }
 
 impl<T: Payload> EventProcessor<T> {
@@ -221,6 +225,7 @@ impl<T: Payload> EventProcessor<T> {
         storage: Arc<dyn PersistentLivenessStorage<T>>,
         time_service: Arc<dyn TimeService>,
         validators: Arc<ValidatorVerifier>,
+        metric_sender_jp: mpsc::Sender<String>,
     ) -> Self {
         counters::BLOCK_RETRIEVAL_COUNT.get();
         counters::STATE_SYNC_COUNT.get();
@@ -243,6 +248,7 @@ impl<T: Payload> EventProcessor<T> {
             time_service,
             last_vote_sent,
             validators,
+            metric_sender_jp,
         }
     }
 
@@ -894,7 +900,7 @@ impl<T: Payload> EventProcessor<T> {
                 return;
             }
         };
-        Self::update_counters_for_committed_blocks(blocks_to_commit.clone());
+        Self::update_counters_for_committed_blocks(blocks_to_commit.clone(), &self.metric_sender_jp);
 
         // notify mempool of rejected txns via txn_manager
         for committed in blocks_to_commit {
@@ -917,7 +923,7 @@ impl<T: Payload> EventProcessor<T> {
     }
 
     // JP CODE
-    fn update_counters_for_committed_blocks(blocks_to_commit: Vec<Arc<ExecutedBlock<T>>>) {
+    fn update_counters_for_committed_blocks(blocks_to_commit: Vec<Arc<ExecutedBlock<T>>>, metric_sender_jp: &mpsc::Sender<String>) {
         for block in blocks_to_commit {
             counters::COMMITTED_BLOCKS_COUNT.inc();
 
@@ -933,15 +939,17 @@ impl<T: Payload> EventProcessor<T> {
                 counters::CREATION_TO_COMMIT_S.observe_duration(time_to_commit);
                 // JP CODE
                 // Print Block information that includes the current timestamp
-                let nil_marker = if block.block().is_nil_block() { "(NIL)" } else { "" };
-                println!("Block(#{}{})(Epoch:{})(#txn:{}): Commit time: {}.{}, At timestamp: {} \n{{",
-                    block.block().round(), 
-                    nil_marker, 
-                    block.block().epoch(), 
-                    (block_txns.len() as f64) - 1.0,
-                    time_to_commit.as_secs(), 
-                    time_to_commit.subsec_millis(),
-                    dt);
+                if block_txns.len() > 1 {
+                    let nil_marker = if block.block().is_nil_block() { "(NIL)" } else { "" };
+                    println!("Block(#{}{})(Epoch:{})(#txn:{}): Commit time: {}.{}, At timestamp: {} \n{{",
+                        block.block().round(), 
+                        nil_marker, 
+                        block.block().epoch(), 
+                        (block_txns.len() as f64) - 1.0,
+                        time_to_commit.as_secs(), 
+                        time_to_commit.subsec_millis(),
+                        dt);
+                }
             }
             
             for txn in block_txns.iter() {
@@ -952,7 +960,7 @@ impl<T: Payload> EventProcessor<T> {
                     if let Some((sender_or_receiver, account)) = event.get_sender_receiver() {
                         if let Some(account_resource_blob) = txn.account_blobs().get(&account) {
                             if let Some(account_resource) = account_resource_blob.get_account_resource_from_blob() {
-                                Self::log_metrics(account.to_string(), account_resource, sender_or_receiver, event.sequence_number());
+                                Self::log_metrics(account.to_string(), sender_or_receiver, account_resource.sent_events().count(), &metric_sender_jp);
                             } else {
                                 println!("Failed to retrieve account resource from accountBlob");
                             }
@@ -977,7 +985,8 @@ impl<T: Payload> EventProcessor<T> {
                     }
                 }
             }
-            println!("}}\n");
+
+            if block_txns.len() > 1 {println!("}}\n");}
 
             for status in block.compute_result().compute_status.iter() {
                 match status {
@@ -998,8 +1007,8 @@ impl<T: Payload> EventProcessor<T> {
 
     // JP function
     // Log the moment where the transactions are validated
-    fn log_metrics(account_address: String, account_resource: AccountResource, sender_or_receiver: bool, sequence_number: u64) {
-        let balance = account_resource.balance();
+    fn log_metrics(account_address: String, sender_or_receiver: bool, sequence_number: u64, metric_sender_jp: &mpsc::Sender<String>) {
+        /*let balance = account_resource.balance();
         let nr_of_received_events = account_resource.received_events().count();
         let nr_of_send_events = account_resource.sent_events().count();
 
@@ -1009,7 +1018,20 @@ impl<T: Payload> EventProcessor<T> {
         }
 
         println!("{}: {}\n     Balance: {}, SequenceNumber: {}, SendEvents: {}, ReceivedEvents: {}"
-        ,sender_or_receiver_string, account_address, balance, sequence_number, nr_of_send_events, nr_of_received_events);
+        ,sender_or_receiver_string, account_address, balance, sequence_number, nr_of_send_events, nr_of_received_events);*/
+
+        let dt: DateTime<Utc> = chrono::Utc::now();
+        let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+        // If this is a sender
+        if !sender_or_receiver {
+            let csv_entry = format!("({},{},{},{},{})", account_address, sequence_number-1, "txn", "commit", dt);
+            println!("{}", csv_entry);
+            if let Err(e) = block_on(metric_sender_jp.clone().send(csv_entry)) {
+                println!("Event_processor: cannot send to channel: {}", e);
+            }
+        }
+        
     }
 
     /// Retrieve a n chained blocks from the block store starting from

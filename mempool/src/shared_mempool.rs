@@ -20,6 +20,8 @@ use futures::{
         mpsc::{self, Receiver, UnboundedSender},
         oneshot,
     },
+    executor::block_on,
+    SinkExt,
     future::join_all,
     stream::select_all,
     Stream, StreamExt,
@@ -34,7 +36,7 @@ use libra_security_logger::{security_log, SecurityEvent};
 use libra_types::{
     account_address::AccountAddress,
     proto::types::{SignedTransaction as SignedTransactionProto, VmStatus as VmStatusProto},
-    transaction::SignedTransaction,
+    transaction::{SignedTransaction, TransactionPayload},
     vm_error::{
         StatusCode::{RESOURCE_DOES_NOT_EXIST, SEQUENCE_NUMBER_TOO_OLD},
         VMStatus,
@@ -57,6 +59,9 @@ use tokio::{
     time::interval,
 };
 use vm_validator::vm_validator::{get_account_state, TransactionValidation, VMValidator};
+
+// JP CODE
+use chrono::{DateTime, Utc};
 
 /// state of last sync with peer
 /// `timeline_id` is position in log of ready transactions
@@ -99,6 +104,7 @@ where
     validator: Arc<V>,
     peer_info: Arc<Mutex<PeerInfo>>,
     subscribers: Vec<UnboundedSender<SharedMempoolNotification>>,
+    metric_sender_jp: mpsc::Sender<String>,
 }
 
 /// Message sent from consensus to mempool
@@ -212,9 +218,32 @@ fn send_mempool_sync_msg(
     msg: MempoolSyncMsg,
     recipient: PeerId,
     mut network_sender: MempoolNetworkSender,
+    metric_sender_jp: Option<mpsc::Sender<String>>,
 ) -> Result<()> {
     // Since this is a direct-send, this will only error if the network
     // module has unexpectedly crashed or shutdown.
+
+    // JP CODE
+    // mem:out
+    let dt: DateTime<Utc> = chrono::Utc::now();
+    let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+    let txns: Option<&Vec<SignedTransaction>> = match &msg {
+        MempoolSyncMsg::BroadcastTransactionsRequest(_tuple, txns) => Some(&txns),
+        MempoolSyncMsg::BroadcastTransactionsResponse(_,_) => None
+    };
+    if let Some(transactions) = txns {
+        for txn in transactions {
+            let csv_entry = format!("({},{},{},{},{})", txn.sender(), txn.sequence_number(), get_txn_type(txn.payload()), "mem:out", dt);
+            println!("{}", csv_entry);
+            if let Some(sender) = metric_sender_jp.clone() {
+                if let Err(e) = block_on(sender.clone().send(csv_entry)) {
+                    println!("Event_processor: cannot send to channel: {}", e);
+                }
+            }
+        }
+    }
+    
     network_sender.send_to(recipient, msg).map_err(|e| {
         format_err!(
             "[shared mempool] failed to direct-send mempool sync message: {}",
@@ -230,6 +259,7 @@ async fn sync_with_peers<'a>(
     mempool: &'a Mutex<CoreMempool>,
     mut network_senders: HashMap<PeerId, MempoolNetworkSender>,
     batch_size: usize,
+    metric_sender_jp: mpsc::Sender<String>,
 ) {
     // Clone the underlying peer_info map and use this to sync and collect
     // state updates. We do this instead of holding the lock for the whole
@@ -263,6 +293,7 @@ async fn sync_with_peers<'a>(
                     ),
                     peer_id,
                     network_sender,
+                    Some(metric_sender_jp.clone()),
                 ) {
                     error!(
                         "[shared mempool] error broadcasting transations to peer {}: {}",
@@ -358,6 +389,12 @@ where
             if let Ok(None) = validations[idx] {
                 let gas_cost = transaction.max_gas_amount();
 
+                let sender = transaction.sender().to_string();
+                let sequence_number_jp = sequence_number.to_string();
+                let txn_type = get_txn_type(transaction.payload());
+                //let transaction_sig = transaction.signature();
+                //let receiver = get_receiver(transaction.payload());
+                
                 let mempool_status = mempool.add_txn(
                     transaction,
                     gas_cost,
@@ -366,9 +403,18 @@ where
                     timeline_state,
                 );
 
+                let dt: DateTime<Utc> = chrono::Utc::now();
+                let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
                 if mempool_status.code == MempoolAddTransactionStatusCode::Valid {
                     // JP CODE
+                    // mem:accept
                     // This is where the transaction is accepted into the mempool
+                    let csv_entry = format!("({},{},{},{},{})", sender, sequence_number_jp, txn_type, "mem:accept", dt);
+                    println!("{}", csv_entry);
+                    if let Err(e) = block_on(smp.metric_sender_jp.clone().send(csv_entry)) {
+                        println!("mempool.process_incoming_transactions(): cannot send to channel: {}", e);
+                    }
                     statuses.push(Status::AcStatus(AdmissionControlStatus::Accepted.into()));
                 } else {
                     statuses.push(Status::MempoolStatus(
@@ -407,6 +453,17 @@ async fn process_client_transaction_submission<V>(
             ));
         }
         Some(txn) => {
+            // JP CODE
+            // mem:ac
+            let dt: DateTime<Utc> = chrono::Utc::now();
+            let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            let csv_entry = format!("({},{},{},{},{})", txn.sender(), txn.sequence_number(), get_txn_type(txn.payload()), "mem:ac", dt);
+            println!("{}", csv_entry);
+
+            if let Err(e) = block_on(smp.metric_sender_jp.clone().send(csv_entry)) {
+                println!("mempool.convert_txn_from_proto(): cannot send to channel: {}", e);
+            }
+
             let mut statuses =
                 process_incoming_transactions(smp.clone(), vec![txn], TimelineState::NotReady)
                     .await;
@@ -426,6 +483,53 @@ async fn process_client_transaction_submission<V>(
         error!("[shared mempool] failed to send back transaction submission result to AC endpoint with error: {:?}", e);
     }
 }
+
+// JP
+// Returns the receiver of a transaction
+/*fn get_receiver(payload: &TransactionPayload) -> String {
+    match payload {
+        TransactionPayload::Program => "PROGRAM, DEPRICATED".to_string(),
+        TransactionPayload::WriteSet(_) => "WriteSet!!".to_string(),
+        TransactionPayload::Script(script) => {
+            if let Some(address) = script.args().get(0) {
+                format!("{}", address)
+            } else {
+                "Could not parse address from script!".to_string()
+            }
+        },
+        TransactionPayload::Module(_) => "Module???".to_string(),
+    }
+}*/
+
+// JP
+// Returns the type of a transaction
+fn get_txn_type(payload: &TransactionPayload) -> String {
+    match payload {
+        TransactionPayload::Program => String::from("Program"),
+        TransactionPayload::WriteSet(_) => String::from("WriteSet(Genesis only)"),
+        TransactionPayload::Script(_script) => String::from("txn"),
+        TransactionPayload::Module(_) => String::from("mod"),
+    }
+}
+
+// JP
+// Prints the request
+/*
+fn print_and_log_transaction(signature: &Ed25519Signature, txn_type: String, sender: String, receiver: String, sequence_number: String, part: MempoolPart) {
+    let dt: DateTime<Utc> = chrono::Utc::now();
+    let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+    let from = match part {
+        MempoolPart::CLI => String::from("mem:cli"), //println!("Admission Control-->Mempool(Transaction) {{"),
+        MempoolPart::Committed => String::from("mem:com"), //println!("Mempool-->Committed(Transaction) {{"),
+        MempoolPart::Inbound => String::from("mem:in"), //println!("Mempool-->Inbound(Transaction) {{"),
+        MempoolPart::Outbound => String::from("mem:out"), //println!("Mempool-->Outbound(Transaction) {{"),
+    };
+    //println!("Sender:   {}", sender);
+    //println!("Receiver: {}", receiver);
+    //println!("SequenceNumber: {}, TimeStamp: {}\n}}\n", sequence_number, dt);
+    println!("({},{},{},{})", signature, txn_type, from, dt);
+}*/
 
 fn log_txn_process_results(results: Vec<Status>, sender: Option<PeerId>) {
     let sender = match sender {
@@ -472,6 +576,19 @@ async fn process_transaction_broadcast<V>(
 ) where
     V: TransactionValidation,
 {
+    // JP CODE
+    // mem:in
+    let dt: DateTime<Utc> = chrono::Utc::now();
+    let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+    for txn in &transactions {
+        let csv_entry = format!("({},{},{},{},{})", txn.sender(), txn.sequence_number(), get_txn_type(txn.payload()), "mem:in", dt);
+        print!("{}", csv_entry);
+        if let Err(e) = block_on(smp.metric_sender_jp.clone().send(csv_entry)) {
+            println!("mempool.process_transaction_broadcast(): cannot send to channel: {}", e);
+        }
+    }
+
     let network_sender = smp
         .network_senders
         .get_mut(&network_id)
@@ -484,6 +601,7 @@ async fn process_transaction_broadcast<V>(
         MempoolSyncMsg::BroadcastTransactionsResponse(start_id, end_id),
         peer_id,
         network_sender,
+        None,
     ) {
         error!(
             "[shared mempool] failed to send ACK back to peer {}: {}",
@@ -530,7 +648,7 @@ where
 
     while let Some(sync_event) = interval.next().await {
         trace!("SyncEvent: {:?}", sync_event);
-        sync_with_peers(&peer_info, &mempool, network_senders.clone(), batch_size).await;
+        sync_with_peers(&peer_info, &mempool, network_senders.clone(), batch_size, smp.metric_sender_jp.clone()).await;
         notify_subscribers(SharedMempoolNotification::Sync, &subscribers);
     }
 
@@ -783,6 +901,7 @@ pub(crate) fn start_shared_mempool<V>(
     validator: Arc<V>,
     subscribers: Vec<UnboundedSender<SharedMempoolNotification>>,
     timer: Option<IntervalStream>,
+    metric_sender_jp: mpsc::Sender<String>,
 ) where
     V: TransactionValidation + 'static,
 {
@@ -804,6 +923,7 @@ pub(crate) fn start_shared_mempool<V>(
         validator,
         peer_info,
         subscribers,
+        metric_sender_jp,
     };
 
     let interval_ms = config.mempool.shared_mempool_tick_interval_ms;
@@ -843,6 +963,7 @@ pub fn bootstrap(
     )>,
     consensus_requests: Receiver<ConsensusRequest>,
     state_sync_requests: Receiver<CommitNotification>,
+    metric_sender_jp: mpsc::Sender<String>,
 ) -> Runtime {
     let runtime = Builder::new()
         .thread_name("shared-mem-")
@@ -871,6 +992,7 @@ pub fn bootstrap(
         vm_validator,
         vec![],
         None,
+        metric_sender_jp,
     );
 
     runtime

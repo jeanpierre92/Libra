@@ -38,6 +38,9 @@ use network::protocols::network::Event;
 use safety_rules::SafetyRulesManager;
 use std::{cmp::Ordering, sync::Arc, time::Duration};
 
+// JP CODE
+use futures::channel::mpsc;
+
 /// The enum contains two processor
 /// StartupSyncProcessor is used to process events in order to sync up with peer if we can't recover from local consensusdb
 /// EventProcessor is used for normal event handling.
@@ -90,6 +93,7 @@ pub struct EpochManager<T> {
     storage: Arc<dyn PersistentLivenessStorage<T>>,
     safety_rules_manager: SafetyRulesManager<T>,
     processor: Option<Processor<T>>,
+    metric_sender_jp: mpsc::Sender<String>,
 }
 
 impl<T: Payload> EpochManager<T> {
@@ -105,6 +109,7 @@ impl<T: Payload> EpochManager<T> {
         state_computer: Arc<dyn StateComputer<Payload = T>>,
         storage: Arc<dyn PersistentLivenessStorage<T>>,
         safety_rules_manager: SafetyRulesManager<T>,
+        metric_sender_jp: mpsc::Sender<String>,
     ) -> Self {
         Self {
             author,
@@ -119,6 +124,7 @@ impl<T: Payload> EpochManager<T> {
             storage,
             safety_rules_manager,
             processor: None,
+            metric_sender_jp,
         }
     }
 
@@ -318,6 +324,7 @@ impl<T: Payload> EpochManager<T> {
             self.storage.clone(),
             self.time_service.clone(),
             validators,
+            self.metric_sender_jp.clone(),
         );
         processor.start().await;
         self.processor = Some(Processor::EventProcessor(processor));

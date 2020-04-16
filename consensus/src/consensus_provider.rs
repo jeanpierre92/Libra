@@ -42,6 +42,7 @@ pub fn make_consensus_provider(
     executor: Arc<Executor<LibraVM>>,
     state_sync_client: Arc<StateSyncClient>,
     consensus_to_mempool_sender: mpsc::Sender<ConsensusRequest>,
+    metric_sender_jp: mpsc::Sender<String>,
 ) -> Box<dyn ConsensusProvider> {
     let storage = Arc::new(StorageWriteProxy::new(node_config));
     let txn_manager = Box::new(MempoolProxy::new(consensus_to_mempool_sender));
@@ -54,6 +55,7 @@ pub fn make_consensus_provider(
         state_computer,
         storage,
         txn_manager,
+        metric_sender_jp,
     ))
 }
 

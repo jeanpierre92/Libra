@@ -16,7 +16,7 @@ use crate::{
 };
 use anyhow::Result;
 use consensus_types::common::{Author, Payload, Round};
-use futures::{select, stream::StreamExt};
+use futures::{select, stream::StreamExt, channel::mpsc};
 use libra_config::config::{ConsensusConfig, NodeConfig};
 use libra_logger::prelude::*;
 use safety_rules::SafetyRulesManager;
@@ -43,6 +43,7 @@ pub struct ChainedBftSMR<T> {
     block_store: Option<Arc<BlockStore<T>>>,
     storage: Arc<dyn PersistentLivenessStorage<T>>,
     input: Option<ChainedBftSMRInput<T>>,
+    metric_sender_jp: mpsc::Sender<String>,
 }
 
 impl<T: Payload> ChainedBftSMR<T> {
@@ -53,6 +54,7 @@ impl<T: Payload> ChainedBftSMR<T> {
         state_computer: Arc<dyn StateComputer<Payload = T>>,
         storage: Arc<dyn PersistentLivenessStorage<T>>,
         txn_manager: Box<dyn TxnManager<Payload = T>>,
+        metric_sender_jp: mpsc::Sender<String>,
     ) -> Self {
         let input = ChainedBftSMRInput {
             network_sender,
@@ -69,6 +71,7 @@ impl<T: Payload> ChainedBftSMR<T> {
             block_store: None,
             storage,
             input: Some(input),
+            metric_sender_jp,
         }
     }
 
@@ -154,6 +157,7 @@ impl<T: Payload> ConsensusProvider for ChainedBftSMR<T> {
             input.state_computer,
             self.storage.clone(),
             input.safety_rules_manager,
+            self.metric_sender_jp.clone(),
         );
 
         let (network_task, network_receiver) =

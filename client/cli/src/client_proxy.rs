@@ -413,6 +413,12 @@ impl ClientProxy {
                 .ok_or_else(|| {
                     format_err!("Unable to find sender account: {}", sender_account_ref_id)
                 })?;
+
+            // JP CODE
+            let dt: DateTime<Utc> = chrono::Utc::now();
+            let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            println!("({},{},{},{},{})", sender_mut.address, sender_mut.sequence_number, "txn", "cli", dt);
+
             self.client.submit_transaction(Some(sender_mut), &req)?;
             sender_address = sender_mut.address;
             sender_sequence = sender_mut.sequence_number;
@@ -466,9 +472,9 @@ impl ClientProxy {
         let receiver_address = self.get_account_address_from_parameter(space_delim_strings[2])?;
 
         // JP CODE
-        let dt: DateTime<Utc> = chrono::Utc::now();
-        let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-        println!("New transaction of {} coin(s) at time: {} {{\n    from: {}\n    To:   {}\n}}", space_delim_strings[3], dt, sender_account_address, receiver_address);
+        //let dt: DateTime<Utc> = chrono::Utc::now();
+        //let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+        //println!("New transaction of {} coin(s) at time: {} {{\n    from: {}\n    To:   {}\n}}", space_delim_strings[3], dt, sender_account_address, receiver_address);
 
         let num_coins = Self::convert_to_micro_libras(space_delim_strings[3])?;   
 

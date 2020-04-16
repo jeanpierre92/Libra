@@ -8,18 +8,25 @@ use debug_interface::{
     proto::node_debug_interface_server::NodeDebugInterfaceServer,
 };
 use executor::Executor;
-use futures::{channel::mpsc::channel, executor::block_on};
+use futures::{channel::mpsc::{channel, Sender, Receiver}, executor::block_on};
 use libra_config::config::{NetworkConfig, NodeConfig, RoleType};
 use libra_json_rpc::bootstrap_from_config as bootstrap_rpc;
 use libra_logger::prelude::*;
 use libra_metrics::metric_server;
 use network::validator_network::network_builder::{NetworkBuilder, TransportType};
 use state_synchronizer::StateSynchronizer;
-use std::{collections::HashMap, net::ToSocketAddrs, sync::Arc, thread, time::Instant};
+use std::{io::Write, fs::OpenOptions, path::Path, collections::HashMap, net::ToSocketAddrs, sync::Arc, thread, time::Instant};
 use storage_client::{StorageReadServiceClient, StorageWriteServiceClient};
 use storage_service::{init_libra_db, start_storage_service_with_db};
 use tokio::runtime::{Builder, Runtime};
 use vm_runtime::LibraVM;
+
+// JP CODE
+//use std::sync::mpsc;
+//use std::sync::mpsc::{Sender, Receiver};
+//use std::path::Path;
+//use std::io::Write;
+//use futures::stream::Stream;
 
 const AC_SMP_CHANNEL_BUFFER_SIZE: usize = 1_024;
 const INTRA_NODE_CHANNEL_BUFFER_SIZE: usize = 1;
@@ -230,8 +237,36 @@ pub fn setup_environment(node_config: &mut NodeConfig) -> LibraHandle {
         Arc::clone(&executor),
         &node_config,
     );
+    
+    // JP CODE
+    let (tx, mut rx): (Sender<String>, Receiver<String>) = channel(1024);
+
+    thread::spawn(move || {
+        let path = Path::new("jp_log.csv");
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .read(true)
+            .append(true)
+            .create(true)
+            .open(path)
+            .expect("Cannot open file!");
+
+        loop {
+            let received = rx.try_next();
+            match received {
+                Ok(raw_msg) => if let Some(mut msg) = raw_msg {
+                    println!("write_all: {}", msg);
+                    msg.push(',');
+                    file.write_all(msg.as_bytes()).expect("Could not write to jp_log file");
+                },
+                Err(_) => thread::sleep(std::time::Duration::from_millis(100)),
+            }
+        } 
+    });
+
     let (ac_sender, client_events) = channel(AC_SMP_CHANNEL_BUFFER_SIZE);
-    let admission_control_runtime = AdmissionControlService::bootstrap(&node_config, ac_sender);
+    let admission_control_runtime = AdmissionControlService::bootstrap(&node_config, ac_sender, tx.clone());
 
     let mut consensus = None;
     let (consensus_to_mempool_sender, consensus_requests) = channel(INTRA_NODE_CHANNEL_BUFFER_SIZE);
@@ -243,6 +278,7 @@ pub fn setup_environment(node_config: &mut NodeConfig) -> LibraHandle {
         client_events,
         consensus_requests,
         state_sync_requests,
+        tx.clone(),
     );
     debug!("Mempool started in {} ms", instant.elapsed().as_millis());
 
@@ -280,6 +316,7 @@ pub fn setup_environment(node_config: &mut NodeConfig) -> LibraHandle {
             executor,
             state_synchronizer.create_client(),
             consensus_to_mempool_sender,
+            tx.clone(),
         );
         consensus_provider
             .start()
