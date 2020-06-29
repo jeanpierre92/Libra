@@ -455,14 +455,15 @@ async fn process_client_transaction_submission<V>(
         Some(txn) => {
             // JP CODE
             // mem:ac
-            let dt: DateTime<Utc> = chrono::Utc::now();
-            let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
-            let csv_entry = format!("({},{},{},{},{})", txn.sender(), txn.sequence_number(), get_txn_type(txn.payload()), "mem:ac", dt);
-            println!("{}", csv_entry);
+            // For now leave out this step
+            //let dt: DateTime<Utc> = chrono::Utc::now();
+            //let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+            //let csv_entry = format!("({},{},{},{},{})", txn.sender(), txn.sequence_number(), get_txn_type(txn.payload()), "mem:ac", dt);
+            //println!("{}", csv_entry);
 
-            if let Err(e) = block_on(smp.metric_sender_jp.clone().send(csv_entry)) {
-                println!("mempool.convert_txn_from_proto(): cannot send to channel: {}", e);
-            }
+            //if let Err(e) = block_on(smp.metric_sender_jp.clone().send(csv_entry)) {
+            //    println!("mempool.convert_txn_from_proto(): cannot send to channel: {}", e);
+            //}
 
             let mut statuses =
                 process_incoming_transactions(smp.clone(), vec![txn], TimelineState::NotReady)

@@ -287,6 +287,19 @@ impl<T: Payload> EventProcessor<T> {
         {
             return;
         }
+
+        // JP CODE
+        // This is where a new proposal is generated
+        // for now safe the timestamp
+        let dt: DateTime<Utc> = chrono::Utc::now();
+        let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+        let csv_entry = format!("(new_proposal,{})", dt);
+        println!("{}", csv_entry);
+        if let Err(e) = block_on(self.metric_sender_jp.clone().send(csv_entry)) {
+            println!("Event_processor: cannot send to channel: {}", e);
+        }
+
         let proposal_msg = match self.generate_proposal(new_round_event).await {
             Ok(x) => x,
             Err(e) => {
@@ -294,9 +307,22 @@ impl<T: Payload> EventProcessor<T> {
                 return;
             }
         };
+
         let mut network = self.network.clone();
         network.broadcast_proposal(proposal_msg).await;
         counters::PROPOSALS_COUNT.inc();
+
+        // JP CODE
+        // This is where the block proposal has been send downstream
+        let dt: DateTime<Utc> = chrono::Utc::now();
+        let dt = dt.format("%Y-%m-%d %H:%M:%S%.3f").to_string();
+
+        let csv_entry = format!("(new_proposal,{})", dt);
+        println!("{}", csv_entry);
+        if let Err(e) = block_on(self.metric_sender_jp.clone().send(csv_entry)) {
+            println!("Event_processor: cannot send to channel: {}", e);
+        }
+
     }
 
     async fn generate_proposal(
@@ -638,6 +664,9 @@ impl<T: Payload> EventProcessor<T> {
 
         let vote_msg = VoteMsg::new(vote, self.gen_sync_info());
         self.network.send_vote(vote_msg, recipients).await;
+
+        // JP CODE
+        // This is where
     }
 
     async fn wait_before_vote_if_needed(
